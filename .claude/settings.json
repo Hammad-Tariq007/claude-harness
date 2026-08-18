@@ -1,0 +1,77 @@
+{
+  "permissions": {
+    "allow": [
+      "Read",
+      "Glob",
+      "Grep",
+      "Edit",
+      "Write",
+      "Task",
+      "Bash(git status:*)",
+      "Bash(git diff:*)",
+      "Bash(git log:*)",
+      "Bash(git add:*)",
+      "Bash(git commit:*)",
+      "Bash(git checkout:*)",
+      "Bash(npm:*)",
+      "Bash(npx:*)",
+      "Bash(yarn:*)",
+      "Bash(pnpm:*)",
+      "Bash(python:*)",
+      "Bash(python3:*)",
+      "Bash(pip:*)",
+      "Bash(pytest:*)",
+      "Bash(ruff:*)",
+      "Bash(mypy:*)",
+      "Bash(php:*)",
+      "Bash(composer:*)",
+      "Bash(./vendor/bin/*)",
+      "Bash(go:*)",
+      "Bash(dotnet:*)",
+      "Bash(make:*)",
+      "Bash(cat:*)",
+      "Bash(ls:*)",
+      "Bash(rg:*)",
+      "Bash(jq:*)"
+    ],
+    "deny": [
+      "Edit(.tickets/*/SPEC.md)",
+      "Write(.tickets/*/SPEC.md)",
+      "Read(.holdout/**)",
+      "Edit(.holdout/**)",
+      "Write(.holdout/**)",
+      "Edit(.claude/**)",
+      "Edit(CLAUDE.md)",
+      "Edit(agent.config.json)",
+      "Edit(scripts/hooks/**)",
+      "Bash(git push --force:*)",
+      "Bash(git reset --hard:*)",
+      "Bash(sudo:*)"
+    ],
+    "defaultMode": "bypassPermissions"
+  },
+  "hooks": {
+    "PreToolUse": [
+      {
+        "matcher": "Edit|Write|MultiEdit|NotebookEdit|Bash",
+        "hooks": [
+          {
+            "type": "command",
+            "command": "bash \"$CLAUDE_PROJECT_DIR/scripts/hooks/guard-paths.sh\""
+          }
+        ]
+      }
+    ],
+    "PostToolUse": [
+      {
+        "matcher": "Edit|Write|MultiEdit|NotebookEdit",
+        "hooks": [
+          {
+            "type": "command",
+            "command": "bash \"$CLAUDE_PROJECT_DIR/scripts/hooks/detect-test-tampering.sh\""
+          }
+        ]
+      }
+    ]
+  }
+}

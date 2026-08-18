@@ -1,0 +1,46 @@
+{
+  "project": "my-project",
+  "$comment": "The ONLY file you edit per project. Everything else is identical across repos.",
+
+  "commands": {
+    "$comment": "Leave any value as empty string to skip that step entirely.",
+    "install":   "npm ci",
+    "test":      "npm test",
+    "lint":      "npm run lint",
+    "typecheck": "npm run typecheck",
+    "build":     "",
+    "holdout":   "npm test -- --config .holdout/jest.config.js"
+  },
+
+  "$stack_examples": {
+    "node":    { "install": "npm ci",                  "test": "npm test",              "lint": "npm run lint",   "typecheck": "npm run typecheck" },
+    "python":  { "install": "pip install -r requirements.txt", "test": "pytest -q",     "lint": "ruff check .",   "typecheck": "mypy ." },
+    "laravel": { "install": "composer install --no-interaction", "test": "php artisan test", "lint": "./vendor/bin/pint --test", "typecheck": "./vendor/bin/phpstan analyse" },
+    "go":      { "install": "go mod download",         "test": "go test ./...",         "lint": "golangci-lint run", "typecheck": "go vet ./..." },
+    "dotnet":  { "install": "dotnet restore",          "test": "dotnet test",           "lint": "dotnet format --verify-no-changes", "typecheck": "dotnet build" }
+  },
+
+  "tickets": {
+    "$comment": "One of: github | jira | linear. Adapter reads its own env vars.",
+    "adapter": "github",
+    "base_branch": "main",
+    "ready_label": "agent-ready"
+  },
+
+  "policy": {
+    "max_fix_rounds": 2,
+    "escalate_model_on_round": 2,
+    "protected_paths": [
+      ".github/**", "**/auth/**", "**/payment*/**", "**/migrations/**",
+      "Dockerfile", "docker-compose*", "*.tf", ".env*"
+    ],
+    "$comment": "A ticket touching a protected path is parked for a human, never implemented."
+  },
+
+  "models": {
+    "planner": "opus",
+    "implementer": "sonnet",
+    "reviewer": "opus",
+    "scribe": "haiku"
+  }
+}
