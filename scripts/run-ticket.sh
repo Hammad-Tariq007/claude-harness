@@ -100,7 +100,7 @@ chmod 444 "$WT/.tickets/$TICKET/SPEC.md"
 
 # Copy config + agent definitions into the worktree
 cp "$CONFIG" "$WT/agent.config.json"
-cp -r "$ROOT/.claude" "$WT/.claude"
+rm -rf "$WT/.claude" && cp -r "$ROOT/.claude" "$WT/.claude"
 cp "$ROOT/CLAUDE.md" "$WT/CLAUDE.md" 2>/dev/null || true
 mkdir -p "$WT/scripts/hooks" && cp "$ROOT/scripts/hooks/"*.sh "$WT/scripts/hooks/"
 
