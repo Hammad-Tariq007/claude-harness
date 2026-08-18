@@ -27,6 +27,14 @@ git add -f .claude/ scripts/ CLAUDE.md agent.config.json
 git commit -m "Add autonomous engineering harness"
 ```
 
+## Shell aliases (optional)
+
+```bash
+echo "source ~/claude-harness/aliases.sh" >> ~/.bashrc && source ~/.bashrc
+```
+
+Then: `ticket 42` · `tonight 2 5` · `tickets` · `parked` · `agentlog`
+
 ## Daily use
 
 ```bash
