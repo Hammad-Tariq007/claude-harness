@@ -123,6 +123,42 @@ NOW=$(sha256sum "$WT/.tickets/$TICKET/SPEC.md" | awk '{print $1}')
 [ "$NOW" = "$(cat "$LOGDIR/spec.sha256")" ] \
   || park "SPEC WAS MODIFIED — treat as a trust violation, do not merge"
 
+# ------------------------------------------------- 7b. protected paths untouched
+# Definitive check. The PreToolUse hook pattern-matches commands and can be evaded
+# by a sufficiently creative shell invocation; this inspects what actually changed.
+log "Checking protected paths..."
+CHANGED=$(git -C "$WT" diff --name-only "origin/$BASE"...HEAD 2>/dev/null; \
+          git -C "$WT" diff --name-only 2>/dev/null; \
+          git -C "$WT" ls-files --others --exclude-standard 2>/dev/null)
+CHANGED=$(printf '%s\n' "$CHANGED" | sort -u | grep -v '^$' || true)
+
+VIOLATIONS=""
+while IFS= read -r pat; do
+  [ -z "$pat" ] && continue
+  while IFS= read -r f; do
+    [ -z "$f" ] && continue
+    # shellcheck disable=SC2254
+    case "$f" in
+      $pat) VIOLATIONS="$VIOLATIONS$f (matches $pat)\n" ;;
+    esac
+  done <<< "$CHANGED"
+done < <(jq -r '.policy.protected_paths[]?' "$CONFIG" 2>/dev/null)
+
+# The harness itself is never editable by the agent.
+while IFS= read -r f; do
+  [ -z "$f" ] && continue
+  case "$f" in
+    .claude/*|CLAUDE.md|agent.config.json|scripts/hooks/*|.tickets/*/SPEC.md)
+      VIOLATIONS="$VIOLATIONS$f (harness file)\n" ;;
+  esac
+done <<< "$CHANGED"
+
+if [ -n "$VIOLATIONS" ]; then
+  printf 'Protected paths modified:\n%b' "$VIOLATIONS" | tee -a "$LOGDIR/run.log"
+  park "protected paths were modified — trust violation, do not merge"
+fi
+log "  ✓ no protected paths touched"
+
 # ---------------------------------------------------------------- 8. tamper log
 if [ -s "$WT/.tickets/tamper.log" ]; then
   cp "$WT/.tickets/tamper.log" "$LOGDIR/"
