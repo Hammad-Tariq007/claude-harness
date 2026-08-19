@@ -119,6 +119,18 @@ environment variables to set before the first run.
 Also confirm the base branch (`main` vs `master` vs `develop`) with
 `git symbolic-ref refs/remotes/origin/HEAD`.
 
+## Phase 6c — Offer a test gate if there is none
+
+If Phase 2 found no working test command, the harness has **no behavioural gate**:
+lint and build pass on code that does nothing. Say so plainly, then offer to fix it.
+
+Ask the human whether to scaffold a runner. If they agree, install the idiomatic one
+for the stack (vitest for Vite, jest for CRA, pytest for Python, phpunit for Laravel),
+add the script, write one smoke test, and verify it runs. You may edit `package.json`
+or its equivalent — no ticket is in flight, so nothing is being graded.
+
+If they decline, record in `CLAUDE.md` that a green run proves compilation only.
+
 ## Phase 7 — Write the files
 
 **`agent.config.json`** — only verified commands. Empty string for anything that

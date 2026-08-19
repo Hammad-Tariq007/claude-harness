@@ -85,7 +85,10 @@ if [ -n "$CMD" ]; then
             block "shell command would write '$tok' while a ticket is running"
           fi ;;
       esac
-      if [ -f "$ROOT/agent.config.json" ]; then
+      # Project protected paths apply only while a ticket is in flight. During
+      # /setup there is no frozen spec and nothing being graded, so scaffolding
+      # a test runner or lockfile is legitimate work, not gate-tampering.
+      if [ -f "$ROOT/agent.config.json" ] && compgen -G "$ROOT/.tickets/*/SPEC.md" >/dev/null 2>&1; then
         while IFS= read -r pat; do
           [ -z "$pat" ] && continue
           # shellcheck disable=SC2254
@@ -151,6 +154,8 @@ esac
 # ---- 4. Project protected paths from agent.config.json ---------------------
 CONFIG="$ROOT/agent.config.json"
 [ -f "$CONFIG" ] || exit 0
+# Same rule for the file-path route: enforce project paths only during a ticket.
+compgen -G "$ROOT/.tickets/*/SPEC.md" >/dev/null 2>&1 || exit 0
 
 while IFS= read -r pattern; do
   [ -z "$pattern" ] && continue
