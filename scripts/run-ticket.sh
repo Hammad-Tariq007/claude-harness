@@ -85,8 +85,10 @@ git -C "$ROOT" fetch origin "$BASE" --quiet || true
 git -C "$ROOT" worktree add --quiet -B "$BRANCH" "$WT" "origin/$BASE" 2>/dev/null \
   || git -C "$ROOT" worktree add --quiet -B "$BRANCH" "$WT" "$BASE"
 
+BASELINE_LOCK=""
 cleanup() {
   cd "$ROOT"
+  [ -n "$BASELINE_LOCK" ] && rmdir "$BASELINE_LOCK" 2>/dev/null || true
   git worktree remove --force "$WT" 2>/dev/null || true
 }
 trap cleanup EXIT
@@ -111,6 +113,17 @@ mkdir -p "$WT/scripts/hooks" && cp "$ROOT/scripts/hooks/"*.sh "$WT/scripts/hooks
 BASE_SHA=$(git -C "$WT" rev-parse HEAD)
 BASELINE_CACHE="$ROOT/.agent-logs/baseline-$BASE_SHA.txt"
 
+# run-night.sh dispatches tickets in parallel; without a lock they race here and
+# corrupt the cache. First one computes it, the rest wait and reuse.
+# Released by cleanup() — do NOT set a second EXIT trap, it would clobber it.
+if mkdir "$BASELINE_CACHE.lock" 2>/dev/null; then
+  BASELINE_LOCK="$BASELINE_CACHE.lock"
+else
+  BASELINE_LOCK=""
+  log "Baseline: another ticket is computing it, waiting..."
+  for _ in $(seq 1 120); do [ -d "$BASELINE_CACHE.lock" ] || break; sleep 5; done
+fi
+
 if [ -f "$BASELINE_CACHE" ]; then
   log "Baseline: cached for $BASE_SHA"
 else
@@ -131,18 +144,26 @@ fi
 
 baseline_status() { grep "^$1=" "$BASELINE_CACHE" 2>/dev/null | cut -d= -f2; }
 
+# Baseline ran install/build in this worktree. Drop any untracked artifacts it left,
+# so step 7b does not read them as changes the agent made.
+git -C "$WT" clean -fdq -e node_modules -e .venv -e vendor 2>/dev/null || true
+
 # ---------------------------------------------------------------- 6. run the agent
 log "Running agent (this is the long part)..."
 cd "$WT"
 set +e
-timeout 3600 claude -p "/execute-ticket $TICKET" \
+MAX_TURNS=$(cfg '.policy.max_turns'); MAX_TURNS="${MAX_TURNS:-250}"
+TIMEOUT_S=$(cfg '.policy.timeout_seconds'); TIMEOUT_S="${TIMEOUT_S:-5400}"
+log "  caps: ${MAX_TURNS} turns, ${TIMEOUT_S}s wall clock"
+timeout "$TIMEOUT_S" claude -p "/execute-ticket $TICKET" \
+  --max-turns "$MAX_TURNS" \
   --dangerously-skip-permissions \
   --output-format json \
   > "$LOGDIR/agent-output.json" 2> "$LOGDIR/agent-error.log"
 AGENT_RC=$?
 set -e
 log "Agent exited with code $AGENT_RC"
-[ $AGENT_RC -eq 124 ] && park "agent timed out after 60 minutes"
+[ $AGENT_RC -eq 124 ] && park "agent timed out after ${TIMEOUT_S}s (raise policy.timeout_seconds if legitimate)"
 
 # ---------------------------------------------------------------- 7. spec integrity
 log "Verifying spec integrity..."
@@ -191,7 +212,7 @@ if [ -s "$WT/.tickets/tamper.log" ]; then
   cp "$WT/.tickets/tamper.log" "$LOGDIR/"
   log "WARNING: tamper log is non-empty:"
   cat "$WT/.tickets/tamper.log" | tee -a "$LOGDIR/run.log"
-  grep -q "SKIP MARKER\|ASSERTIONS REMOVED" "$WT/.tickets/tamper.log" \
+  grep -q "VIOLATION" "$WT/.tickets/tamper.log" \
     && park "test tampering detected — do not merge"
 fi
 
@@ -234,7 +255,7 @@ HOLDOUT=$(cfg '.commands.holdout')
 if [ -n "$HOLDOUT" ] && [ -d "$ROOT/.holdout" ]; then
   log "Running holdout tests (agent never saw these)..."
   cp -r "$ROOT/.holdout" "$WT/.holdout"
-  if ! eval "$HOLDOUT" > "$LOGDIR/verify-holdout.log" 2>&1; then
+  if ! ( cd "$WT" && eval "$HOLDOUT" ) > "$LOGDIR/verify-holdout.log" 2>&1; then
     park "HOLDOUT FAILED while visible tests passed — classic test-gaming signature, do not merge"
   fi
   log "  ✓ holdout passed"

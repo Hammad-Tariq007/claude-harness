@@ -50,7 +50,7 @@ else
 fi
 
 # Remote reachable (the runner pushes branches).
-if git ls-remote --exit-code origin >/dev/null 2>&1; then
+if git -C "$ROOT" ls-remote --exit-code origin >/dev/null 2>&1; then
   echo "  ✓ git remote reachable"
 else
   echo "  ✗ git remote unreachable"
@@ -58,7 +58,7 @@ else
 fi
 
 # Uncommitted work would not exist in the fresh worktree.
-if [ -n "$(git status --porcelain 2>/dev/null)" ]; then
+if [ -n "$(git -C "$ROOT" status --porcelain 2>/dev/null)" ]; then
   echo "  ⚠ uncommitted changes — these will NOT be present in agent worktrees"
 fi
 
@@ -83,7 +83,12 @@ printf '%s\n' "${TICKETS[@]}" \
 {
   echo "# Overnight run — $(date -u '+%Y-%m-%d %H:%M UTC')"
   echo
-  echo "Dispatched: ${#TICKETS[@]} · Parallelism: $PARALLEL"
+  READY=0; PARKED=0
+  for t in "${TICKETS[@]}"; do
+    [ -f "$ROOT/.agent-logs/$t/pr-url.txt" ] && READY=$((READY+1))
+    [ -f "$ROOT/.agent-logs/$t/PARKED" ]     && PARKED=$((PARKED+1))
+  done
+  echo "Dispatched: ${#TICKETS[@]} · PRs: $READY · Parked: $PARKED · Parallelism: $PARALLEL"
   echo
   echo "## Ready for review"
   for t in "${TICKETS[@]}"; do
@@ -105,7 +110,7 @@ printf '%s\n' "${TICKETS[@]}" \
     if [ -s "$ROOT/.agent-logs/$t/tamper.log" ]; then
       echo "- ⚠️ **$t** — tamper log non-empty, inspect before merging"; FLAGS=1
     fi
-    if grep -qi "SPEC WAS MODIFIED\|test tampering\|HOLDOUT FAILED" "$ROOT/.agent-logs/$t/PARKED" 2>/dev/null; then
+    if grep -qi "SPEC WAS MODIFIED\|test tampering\|HOLDOUT FAILED\|protected paths were modified" "$ROOT/.agent-logs/$t/PARKED" 2>/dev/null; then
       echo "- 🚨 **$t** — trust violation, do NOT merge"; FLAGS=1
     fi
   done
