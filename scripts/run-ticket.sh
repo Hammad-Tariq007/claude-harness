@@ -60,7 +60,11 @@ Classify this ticket. Reply with ONE WORD only, nothing else.
 READY        - clear enough for an autonomous agent: has a described problem and an
                implied or stated definition of done.
 UNDERSPECIFIED - too vague, missing reproduction steps, or needs a product decision.
+               Judge the ticket text only. A hard task with clear criteria is READY.
 SENSITIVE    - touches auth, payments, PII, migrations, infrastructure, CI, or crypto.
+INFEASIBLE   - clear and well-specified, but this repo cannot support it: it needs a
+               framework, build tool, or dependency that is absent, and adding it would
+               require editing a protected path. Judge against the repo, not the ticket.
 
 --- TICKET ---
 $(cat "$LOGDIR/ticket.md")
@@ -71,6 +75,7 @@ EOF
 # than requiring the whole response to equal one word.
 case "$TRIAGE" in
   *UNDERSPECIFIED*) TRIAGE=UNDERSPECIFIED ;;
+  *INFEASIBLE*)     TRIAGE=INFEASIBLE ;;
   *SENSITIVE*)      TRIAGE=SENSITIVE ;;
   *READY*)          TRIAGE=READY ;;
   *)                TRIAGE="UNPARSEABLE:${TRIAGE:0:60}" ;;
