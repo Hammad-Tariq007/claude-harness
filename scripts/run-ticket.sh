@@ -196,7 +196,11 @@ done < <(jq -r '.policy.protected_paths[]?' "$CONFIG" 2>/dev/null)
 while IFS= read -r f; do
   [ -z "$f" ] && continue
   case "$f" in
-    .claude/*|CLAUDE.md|agent.config.json|scripts/hooks/*|.tickets/*/SPEC.md)
+    .claude/*|scripts/*|.tickets/*/SPEC.md)
+      VIOLATIONS="$VIOLATIONS$f (harness file)\n" ;;
+    CLAUDE.md|agent.config.json)
+      # These are legitimately written by /setup, but never during a ticket —
+      # and a ticket is exactly what this script is running.
       VIOLATIONS="$VIOLATIONS$f (harness file)\n" ;;
   esac
 done <<< "$CHANGED"

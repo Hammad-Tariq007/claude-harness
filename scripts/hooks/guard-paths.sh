@@ -46,9 +46,12 @@ fi
 # post-run diff check that cannot be evaded.
 if [ -n "$CMD" ]; then
   # Does the command look like it writes to a file at all?
-  # Strip redirections to /dev/null first — they are not file writes, and treating
-  # them as such blocked read-only commands like `ls foo 2>/dev/null`.
-  CMD_SCAN=$(printf '%s' "$CMD" | sed 's#[0-9]*>>*[[:space:]]*/dev/null##g')
+  # A heredoc BODY is content, not a write target. Scanning it meant that writing a
+  # file which merely *mentions* a protected path was blocked by its own contents.
+  # Drop everything from the heredoc marker onwards before looking for targets.
+  CMD_SCAN=$(printf '%s' "$CMD" | sed "s/<<-\\?['\"]\\?[A-Za-z_][A-Za-z0-9_]*['\"]\\?.*//")
+  # Redirections to /dev/null are not file writes.
+  CMD_SCAN=$(printf '%s' "$CMD_SCAN" | sed 's#[0-9]*>>*[[:space:]]*/dev/null##g')
   if printf '%s' "$CMD_SCAN" | grep -qE '(^|[^>])>>?[[:space:]]*[^ &|]|(^|[[:space:]])(sed[[:space:]]+-i|perl[[:space:]]+-i|tee|truncate|dd[[:space:]]|install[[:space:]]|cp[[:space:]]|mv[[:space:]]|ln[[:space:]]|touch[[:space:]]|chmod[[:space:]]|chown[[:space:]])'; then
 
     check_protected_token() {
@@ -87,7 +90,7 @@ if [ -n "$CMD" ]; then
   # Interpreters can write anything; deny inline scripts that name a protected path.
   case "$CMD" in
     *python*-c*|*python3*-c*|*node*-e*|*ruby*-e*|*perl*-e*)
-      for tok in $CMD; do
+      for tok in $CMD_SCAN; do
         case "$tok" in
           */*|*.*) check_protected_token 2>/dev/null "$tok" || true ;;
         esac
