@@ -22,6 +22,54 @@ STAMP=$(date -u +%Y%m%d-%H%M)
 DIGEST="$ROOT/.agent-logs/digest-$STAMP.md"
 mkdir -p "$ROOT/.agent-logs"
 
+# ------------------------------------------------------------------ preflight
+# Fail fast. A batch started against a broken environment parks every ticket in it.
+echo "Preflight..."
+PREFLIGHT_FAIL=0
+
+for tool in claude git jq; do
+  command -v "$tool" >/dev/null || { echo "  ✗ $tool not found"; PREFLIGHT_FAIL=1; }
+done
+
+# Docker, only if any configured command mentions it.
+if jq -r '.commands | to_entries[].value' "$CONFIG" 2>/dev/null | grep -q docker; then
+  if docker info >/dev/null 2>&1; then
+    echo "  ✓ docker daemon reachable"
+  else
+    echo "  ✗ docker daemon unreachable — every ticket would park"
+    PREFLIGHT_FAIL=1
+  fi
+fi
+
+# Ticket adapter credentials.
+if "$ADAPTER" list_ready "$LABEL" >/dev/null 2>&1; then
+  echo "  ✓ ticket adapter authenticated"
+else
+  echo "  ✗ ticket adapter failed — check credentials"
+  PREFLIGHT_FAIL=1
+fi
+
+# Remote reachable (the runner pushes branches).
+if git ls-remote --exit-code origin >/dev/null 2>&1; then
+  echo "  ✓ git remote reachable"
+else
+  echo "  ✗ git remote unreachable"
+  PREFLIGHT_FAIL=1
+fi
+
+# Uncommitted work would not exist in the fresh worktree.
+if [ -n "$(git status --porcelain 2>/dev/null)" ]; then
+  echo "  ⚠ uncommitted changes — these will NOT be present in agent worktrees"
+fi
+
+if [ "$PREFLIGHT_FAIL" = "1" ]; then
+  echo
+  echo "Preflight failed. Not starting the batch — fix the above and re-run."
+  exit 1
+fi
+echo "  Preflight OK"
+echo
+
 echo "Fetching tickets labelled '$LABEL'..."
 mapfile -t TICKETS < <("$ADAPTER" list_ready "$LABEL" | head -n "$MAX")
 [ ${#TICKETS[@]} -eq 0 ] && { echo "No ready tickets. Nothing to do."; exit 0; }

@@ -104,6 +104,33 @@ rm -rf "$WT/.claude" && cp -r "$ROOT/.claude" "$WT/.claude"
 cp "$ROOT/CLAUDE.md" "$WT/CLAUDE.md" 2>/dev/null || true
 mkdir -p "$WT/scripts/hooks" && cp "$ROOT/scripts/hooks/"*.sh "$WT/scripts/hooks/"
 
+# ------------------------------------------------------- 5b. baseline verification
+# Establish which gates already fail on untouched code. Without this the harness
+# blames the agent for pre-existing debt and for flaky infrastructure.
+# Cached per base commit, so it costs nothing on repeat runs.
+BASE_SHA=$(git -C "$WT" rev-parse HEAD)
+BASELINE_CACHE="$ROOT/.agent-logs/baseline-$BASE_SHA.txt"
+
+if [ -f "$BASELINE_CACHE" ]; then
+  log "Baseline: cached for $BASE_SHA"
+else
+  log "Baseline: verifying untouched code (one-off for this commit)..."
+  : > "$BASELINE_CACHE"
+  for step in install test lint typecheck build; do
+    CMD=$(cfg ".commands.$step")
+    [ -z "$CMD" ] && continue
+    if ( cd "$WT" && eval "$CMD" ) > "$LOGDIR/baseline-$step.log" 2>&1; then
+      echo "$step=pass" >> "$BASELINE_CACHE"
+      log "  baseline $step: pass"
+    else
+      echo "$step=fail" >> "$BASELINE_CACHE"
+      log "  baseline $step: FAIL (pre-existing — the agent will not be blamed for this)"
+    fi
+  done
+fi
+
+baseline_status() { grep "^$1=" "$BASELINE_CACHE" 2>/dev/null | cut -d= -f2; }
+
 # ---------------------------------------------------------------- 6. run the agent
 log "Running agent (this is the long part)..."
 cd "$WT"
@@ -176,15 +203,31 @@ for step in install test lint typecheck build; do
   CMD=$(cfg ".commands.$step")
   [ -z "$CMD" ] && continue
   log "  → $step: $CMD"
-  if ! ( cd "$WT" && eval "$CMD" ) > "$LOGDIR/verify-$step.log" 2>&1; then
-    log "  ✗ $step FAILED (see verify-$step.log)"
-    [ "$step" = "install" ] && park "install failed — environment problem, not agent's fault"
-    VERIFY_OK=0
-  else
+  if ( cd "$WT" && eval "$CMD" ) > "$LOGDIR/verify-$step.log" 2>&1; then
     log "  ✓ $step passed"
+    continue
   fi
+
+  # One retry. Absorbs flaky services, container cold starts, network blips.
+  log "  … $step failed, retrying once in 10s"
+  sleep 10
+  if ( cd "$WT" && eval "$CMD" ) > "$LOGDIR/verify-$step.log" 2>&1; then
+    log "  ✓ $step passed on retry (transient)"
+    continue
+  fi
+
+  # Still failing. Was it already failing before the agent touched anything?
+  if [ "$(baseline_status "$step")" = "fail" ]; then
+    log "  ⚠ $step fails, but it ALSO failed on untouched code — pre-existing, not a regression"
+    echo "$step: pre-existing failure" >> "$LOGDIR/pre-existing.txt"
+    continue
+  fi
+
+  log "  ✗ $step REGRESSED (passed on baseline, fails now — see verify-$step.log)"
+  [ "$step" = "install" ] && park "install failed — environment problem, not agent's fault"
+  VERIFY_OK=0
 done
-[ $VERIFY_OK -eq 1 ] || park "independent verification failed"
+[ $VERIFY_OK -eq 1 ] || park "independent verification failed — $(cat "$LOGDIR"/verify-*.log 2>/dev/null | tail -3 | tr '\n' ' ')"
 
 # --------------------------------------------------------------- 10. holdout tests
 HOLDOUT=$(cfg '.commands.holdout')
