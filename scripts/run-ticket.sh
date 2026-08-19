@@ -29,7 +29,7 @@ park() {
   # and the cleanup trap would otherwise delete the whole worktree.
   if [ -d "$WT" ]; then
     git -C "$WT" add -A 2>/dev/null || true
-    git -C "$WT" -c user.name=agent -c user.email=agent@localhost \
+    git -C "$WT" -c user.name=agent -c user.email=agent@localhost -c commit.gpgsign=false \
         commit -q -m "[agent][parked] $TICKET" 2>/dev/null || true
     git -C "$WT" diff "origin/$BASE"...HEAD > "$LOGDIR/parked.diff" 2>/dev/null || true
     log "  work preserved: branch $BRANCH + $LOGDIR/parked.diff"
@@ -280,7 +280,11 @@ cd "$WT"
 git checkout -- .claude scripts/hooks agent.config.json CLAUDE.md 2>/dev/null || true
 git clean -fd .claude scripts/hooks 2>/dev/null || true
 git add -A
-git -c user.name="agent" -c user.email="agent@localhost" \
+# Identity is configurable. Signing is force-disabled: an autonomous run has no
+# TTY, so pinentry times out and the commit fails outright.
+AUTHOR_NAME=$(cfg '.git.author_name');   AUTHOR_NAME="${AUTHOR_NAME:-agent}"
+AUTHOR_EMAIL=$(cfg '.git.author_email'); AUTHOR_EMAIL="${AUTHOR_EMAIL:-agent@localhost}"
+git -c user.name="$AUTHOR_NAME" -c user.email="$AUTHOR_EMAIL" -c commit.gpgsign=false \
     commit -q -m "[agent] $TICKET
 
 $(head -3 "$LOGDIR/ticket.md")
