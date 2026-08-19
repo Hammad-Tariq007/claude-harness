@@ -46,14 +46,21 @@ fi
 # post-run diff check that cannot be evaded.
 if [ -n "$CMD" ]; then
   # Does the command look like it writes to a file at all?
-  if printf '%s' "$CMD" | grep -qE '(^|[^>])>>?[[:space:]]*[^ &|]|(^|[[:space:]])(sed[[:space:]]+-i|perl[[:space:]]+-i|tee|truncate|dd[[:space:]]|install[[:space:]]|cp[[:space:]]|mv[[:space:]]|ln[[:space:]]|touch[[:space:]]|chmod[[:space:]]|chown[[:space:]])'; then
+  # Strip redirections to /dev/null first — they are not file writes, and treating
+  # them as such blocked read-only commands like `ls foo 2>/dev/null`.
+  CMD_SCAN=$(printf '%s' "$CMD" | sed 's#[0-9]*>>*[[:space:]]*/dev/null##g')
+  if printf '%s' "$CMD_SCAN" | grep -qE '(^|[^>])>>?[[:space:]]*[^ &|]|(^|[[:space:]])(sed[[:space:]]+-i|perl[[:space:]]+-i|tee|truncate|dd[[:space:]]|install[[:space:]]|cp[[:space:]]|mv[[:space:]]|ln[[:space:]]|touch[[:space:]]|chmod[[:space:]]|chown[[:space:]])'; then
 
     check_protected_token() {
       tok="$1"
       tok="${tok#./}"
       case "$tok" in
-        .claude/*|CLAUDE.md|agent.config.json|scripts/hooks/*|.tickets/*/SPEC.md|.holdout/*)
+        .claude/*|scripts/*|.tickets/*/SPEC.md|.holdout/*)
           block "shell command would write to harness file '$tok'" ;;
+        CLAUDE.md|agent.config.json)
+          if compgen -G "$ROOT/.tickets/*/SPEC.md" > /dev/null 2>&1; then
+            block "shell command would write '$tok' while a ticket is running"
+          fi ;;
       esac
       if [ -f "$ROOT/agent.config.json" ]; then
         while IFS= read -r pat; do
@@ -67,7 +74,7 @@ if [ -n "$CMD" ]; then
     }
 
     # Inspect every whitespace-separated token that looks like a path.
-    for tok in $CMD; do
+    for tok in $CMD_SCAN; do
       case "$tok" in
         -*|'>'|'>>'|'|'|'&&') continue ;;
       esac
@@ -98,9 +105,22 @@ esac
 
 # ---- 3. Harness self-protection --------------------------------------------
 # The agent must never edit its own instructions, config, hooks, or the spec.
+# Never editable, in any mode. scripts/** covers run-ticket.sh itself — the
+# orchestrator that performs the independent verification.
 case "$REL" in
-  .claude/*|CLAUDE.md|agent.config.json|scripts/hooks/*|.tickets/*/SPEC.md|.holdout/*)
+  .claude/*|scripts/*|.tickets/*/SPEC.md|.holdout/*)
     block "'$REL' is part of the agent harness and cannot be modified" ;;
+esac
+
+# CLAUDE.md and agent.config.json are what /setup produces. Blocking them outright
+# makes onboarding manual. Blocking them only while a ticket is running keeps the
+# real protection: a frozen SPEC.md means a ticket is in flight.
+case "$REL" in
+  CLAUDE.md|agent.config.json)
+    if compgen -G "$ROOT/.tickets/*/SPEC.md" > /dev/null 2>&1; then
+      block "'$REL' cannot be modified while a ticket is running"
+    fi
+    ;;
 esac
 
 # ---- 4. Project protected paths from agent.config.json ---------------------
