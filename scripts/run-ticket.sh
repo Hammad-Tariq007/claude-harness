@@ -273,9 +273,14 @@ fi
 
 # --------------------------------------------------------------- 11. sanity checks
 [ -f "$WT/.tickets/$TICKET/REPORT.md" ] || park "agent produced no REPORT.md"
-if ! git -C "$WT" diff --quiet "origin/$BASE" -- 2>/dev/null; then :; else
-  git -C "$WT" diff --quiet HEAD 2>/dev/null && park "agent made no changes"
-fi
+# Count modified AND untracked files. `git diff` ignores untracked entirely, so a
+# ticket that only adds new files looked like the agent had done nothing at all.
+CHANGE_COUNT=$( { git -C "$WT" diff --name-only 2>/dev/null
+                  git -C "$WT" diff --name-only --cached 2>/dev/null
+                  git -C "$WT" ls-files --others --exclude-standard 2>/dev/null
+                } | sort -u | grep -v '^$' | grep -v '^\.tickets/' | wc -l )
+[ "$CHANGE_COUNT" -eq 0 ] && park "agent made no changes"
+log "  $CHANGE_COUNT file(s) changed"
 
 # --------------------------------------------------------------- 12. commit + PR
 log "Committing and opening PR..."
