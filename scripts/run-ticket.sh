@@ -267,13 +267,24 @@ fi
 
 # ---------------------------------------------------------------- 9. INDEPENDENT verification
 # This is the critical step: WE run the tests, not the agent. Its self-report is not evidence.
+# Non-interactive. npm exec (and several other tools) PROMPT when a package is
+# missing, and a headless run then hangs forever waiting for stdin.
+export CI=true
+export npm_config_yes=false
+export npm_config_fund=false
+export npm_config_audit=false
+export DEBIAN_FRONTEND=noninteractive
+
 log "Running independent verification..."
 VERIFY_OK=1
 for step in install test lint typecheck build; do
   CMD=$(cfg ".commands.$step")
   [ -z "$CMD" ] && continue
   log "  → $step: $CMD"
-  if ( cd "$WT" && eval "$CMD" ) > "$LOGDIR/verify-$step.log" 2>&1; then
+  # Cap each gate. Without this a hung linter or bundler blocks the run forever —
+  # the agent has a timeout, the verification did not.
+  STEP_TIMEOUT=$(cfg '.policy.step_timeout_seconds'); STEP_TIMEOUT="${STEP_TIMEOUT:-900}"
+  if ( cd "$WT" && timeout "$STEP_TIMEOUT" bash -c "$CMD" ) > "$LOGDIR/verify-$step.log" 2>&1; then
     log "  ✓ $step passed"
     continue
   fi
@@ -281,7 +292,7 @@ for step in install test lint typecheck build; do
   # One retry. Absorbs flaky services, container cold starts, network blips.
   log "  … $step failed, retrying once in 10s"
   sleep 10
-  if ( cd "$WT" && eval "$CMD" ) > "$LOGDIR/verify-$step.log" 2>&1; then
+  if ( cd "$WT" && timeout "$STEP_TIMEOUT" bash -c "$CMD" ) > "$LOGDIR/verify-$step.log" 2>&1; then
     log "  ✓ $step passed on retry (transient)"
     continue
   fi
