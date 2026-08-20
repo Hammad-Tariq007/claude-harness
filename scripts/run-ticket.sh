@@ -145,8 +145,19 @@ if mkdir "$BASELINE_CACHE.lock" 2>/dev/null; then
   BASELINE_LOCK="$BASELINE_CACHE.lock"
 else
   BASELINE_LOCK=""
-  log "Baseline: another ticket is computing it, waiting..."
-  for _ in $(seq 1 120); do [ -d "$BASELINE_CACHE.lock" ] || break; sleep 5; done
+  # A valid cache makes the lock irrelevant — an abandoned lock from a crashed run
+  # would otherwise block for the full timeout despite the answer already being there.
+  if [ -f "$BASELINE_CACHE" ]; then
+    log "Baseline: cache already present, ignoring stale lock"
+    rmdir "$BASELINE_CACHE.lock" 2>/dev/null || true
+  else
+    log "Baseline: another ticket is computing it, waiting..."
+    for _ in $(seq 1 120); do
+      [ -f "$BASELINE_CACHE" ] && break
+      [ -d "$BASELINE_CACHE.lock" ] || break
+      sleep 5
+    done
+  fi
 fi
 
 if [ -f "$BASELINE_CACHE" ]; then
