@@ -45,6 +45,11 @@ for tool in jq git claude; do
 done
 [ -x "$ADAPTER" ] || { echo "FATAL: adapter not found: $ADAPTER"; exit 1; }
 
+# Keep the log directory bounded. Runs are cheap to re-read from git; stale baseline
+# caches for commits that no longer exist are pure noise.
+find "$ROOT/.agent-logs" -maxdepth 1 -name 'baseline-*.txt' -mtime +14 -delete 2>/dev/null || true
+find "$ROOT/.agent-logs" -maxdepth 1 -type d -mtime +30 -exec rm -rf {} + 2>/dev/null || true
+
 log "=== Ticket $TICKET | adapter=$(cfg '.tickets.adapter') | base=$BASE ==="
 
 # ---------------------------------------------------------------- 2. fetch
@@ -111,6 +116,13 @@ rm -rf "$WT/.claude" && cp -r "$ROOT/.claude" "$WT/.claude"
 cp "$ROOT/CLAUDE.md" "$WT/CLAUDE.md" 2>/dev/null || true
 mkdir -p "$WT/scripts/hooks" && cp "$ROOT/scripts/hooks/"*.sh "$WT/scripts/hooks/"
 
+# Fingerprint the harness files this script just copied in. Step 7b must flag only
+# changes the AGENT made, not the copies we made a moment ago — otherwise any local
+# harness edit that is not yet pushed parks every ticket as a "trust violation".
+HARNESS_BASELINE="$LOGDIR/harness-fingerprint.txt"
+( cd "$WT" && find .claude scripts/hooks CLAUDE.md agent.config.json -type f 2>/dev/null \
+    | sort | xargs -r sha256sum ) > "$HARNESS_BASELINE" 2>/dev/null || : > "$HARNESS_BASELINE"
+
 # ------------------------------------------------------- 5b. baseline verification
 # Establish which gates already fail on untouched code. Without this the harness
 # blames the agent for pre-existing debt and for flaky infrastructure.
@@ -121,6 +133,9 @@ BASELINE_CACHE="$ROOT/.agent-logs/baseline-$BASE_SHA.txt"
 # run-night.sh dispatches tickets in parallel; without a lock they race here and
 # corrupt the cache. First one computes it, the rest wait and reuse.
 # Released by cleanup() — do NOT set a second EXIT trap, it would clobber it.
+# A SIGKILLed holder leaves the lock behind; reclaim anything older than 30 minutes.
+find "$(dirname "$BASELINE_CACHE")" -maxdepth 1 -name "$(basename "$BASELINE_CACHE").lock" \
+     -type d -mmin +30 -exec rmdir {} + 2>/dev/null || true
 if mkdir "$BASELINE_CACHE.lock" 2>/dev/null; then
   BASELINE_LOCK="$BASELINE_CACHE.lock"
 else
@@ -151,7 +166,8 @@ baseline_status() { grep "^$1=" "$BASELINE_CACHE" 2>/dev/null | cut -d= -f2; }
 
 # Baseline ran install/build in this worktree. Drop any untracked artifacts it left,
 # so step 7b does not read them as changes the agent made.
-git -C "$WT" clean -fdq -e node_modules -e .venv -e vendor 2>/dev/null || true
+git -C "$WT" clean -fdq -e node_modules -e .venv -e vendor -e .tickets -e .claude \
+    -e scripts -e CLAUDE.md -e agent.config.json 2>/dev/null || true
 
 # ---------------------------------------------------------------- 6. run the agent
 log "Running agent (this is the long part)..."
@@ -197,16 +213,24 @@ while IFS= read -r pat; do
   done <<< "$CHANGED"
 done < <(jq -r '.policy.protected_paths[]?' "$CONFIG" 2>/dev/null)
 
-# The harness itself is never editable by the agent.
+# The harness itself is never editable by the agent. Compare against the fingerprint
+# taken right after we copied these files in, so our own copies are not violations.
+HARNESS_NOW=$( cd "$WT" && find .claude scripts/hooks CLAUDE.md agent.config.json -type f 2>/dev/null \
+                 | sort | xargs -r sha256sum 2>/dev/null || true )
+if ! diff -q <(printf '%s\n' "$HARNESS_NOW") "$HARNESS_BASELINE" >/dev/null 2>&1; then
+  CHANGED_HARNESS=$(diff <(printf '%s\n' "$HARNESS_NOW") "$HARNESS_BASELINE" \
+                     | grep -oE '[^ ]+$' | grep -v '^$' | sort -u || true)
+  while IFS= read -r f; do
+    [ -z "$f" ] && continue
+    VIOLATIONS="$VIOLATIONS$f (harness file altered by the agent)\n"
+  done <<< "$CHANGED_HARNESS"
+fi
+
+# The frozen spec is checked by hash in step 7; flag any other .tickets/*/SPEC.md too.
 while IFS= read -r f; do
   [ -z "$f" ] && continue
   case "$f" in
-    .claude/*|scripts/*|.tickets/*/SPEC.md)
-      VIOLATIONS="$VIOLATIONS$f (harness file)\n" ;;
-    CLAUDE.md|agent.config.json)
-      # These are legitimately written by /setup, but never during a ticket —
-      # and a ticket is exactly what this script is running.
-      VIOLATIONS="$VIOLATIONS$f (harness file)\n" ;;
+    .tickets/*/SPEC.md) VIOLATIONS="$VIOLATIONS$f (frozen spec)\n" ;;
   esac
 done <<< "$CHANGED"
 
@@ -287,8 +311,14 @@ log "Committing and opening PR..."
 cd "$WT"
 # Restore harness files to their committed state. They are tracked in git now,
 # so deleting them would show up as a deletion in the PR diff.
-git checkout -- .claude scripts/hooks agent.config.json CLAUDE.md 2>/dev/null || true
-git clean -fd .claude scripts/hooks 2>/dev/null || true
+# Restore each path separately: `git checkout -- a b c` aborts entirely if any one
+# pathspec is untracked, which silently left our copies in the PR diff.
+for hp in .claude scripts/hooks agent.config.json CLAUDE.md; do
+  git checkout -- "$hp" 2>/dev/null || true
+  # Untracked in this project? Then remove our copy rather than commit it.
+  git ls-files --error-unmatch "$hp" >/dev/null 2>&1 || rm -rf "$hp" 2>/dev/null || true
+done
+git clean -fdq .claude scripts/hooks 2>/dev/null || true
 git add -A
 # Identity is configurable. Signing is force-disabled: an autonomous run has no
 # TTY, so pinentry times out and the commit fails outright.
