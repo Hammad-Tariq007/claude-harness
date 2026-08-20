@@ -91,6 +91,11 @@ log "Triage result: $TRIAGE"
 
 # ---------------------------------------------------------------- 4. isolate
 log "Creating worktree..."
+# Clear anything left by an interrupted run (crash, power cut, Ctrl-C). Without this
+# the retry dies on "branch already used by worktree".
+git -C "$ROOT" worktree remove --force "$WT" 2>/dev/null || true
+rm -rf "$WT" 2>/dev/null || true
+git -C "$ROOT" worktree prune 2>/dev/null || true
 git -C "$ROOT" fetch origin "$BASE" --quiet || true
 git -C "$ROOT" worktree add --quiet -B "$BRANCH" "$WT" "origin/$BASE" 2>/dev/null \
   || git -C "$ROOT" worktree add --quiet -B "$BRANCH" "$WT" "$BASE"
