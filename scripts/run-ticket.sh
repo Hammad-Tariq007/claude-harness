@@ -275,6 +275,14 @@ export npm_config_fund=false
 export npm_config_audit=false
 export DEBIAN_FRONTEND=noninteractive
 
+# Non-interactive. npm exec (and several other tools) PROMPT when a package is
+# missing, and a headless run then hangs forever waiting for stdin.
+export CI=true
+export npm_config_yes=false
+export npm_config_fund=false
+export npm_config_audit=false
+export DEBIAN_FRONTEND=noninteractive
+
 log "Running independent verification..."
 VERIFY_OK=1
 for step in install test lint typecheck build; do
