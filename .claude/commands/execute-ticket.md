@@ -15,6 +15,17 @@ re-run a gate that already passed, and do not re-run gates on a change they cann
 
 ---
 
+### Never block on a process or a timer
+
+You are running headless with no terminal. Do not poll for a process, do not `sleep`
+to wait for something, and do not run any command that waits on external state.
+
+In particular, never wait on the process that launched you — a `while kill -0 <pid>`
+loop against your own parent deadlocks permanently, because that process cannot exit
+until you do.
+
+Subagents return their results to you directly. There is nothing to poll for.
+
 ### Phase 1 — Plan
 
 Invoke the `planner` subagent for ticket $1. Save its output to `.tickets/$1/PLAN.md`.
